@@ -1,30 +1,29 @@
 ---
-title: "Untitled"
+title: "PML Course Project"
 author: "jene"
-date: "29 de mayo de 2019"
-output: html_document
+date: "May 31, 2019"
+output: 
+  html_document: 
+    keep_md: yes
 ---
-### Introduction
+## Introduction
 
-This report uses a [Weight Lifting Exercises Dataset](http://groupware.les.inf.puc-rio.br/har#ixzz3DTR1Lq9c) to build a prediction model for whether or not a person is correctly performing an exercise, and what type of error he or she may be making. Specifically, 
+This proyecto uses a [Weight Lifting Exercises Dataset](http://groupware.les.inf.puc-rio.br/har#dataset) to build a prediction model for whether or not a person is correctly performing an exercise, and what type of error he or she may be making. Specifically, 
 
->"[s]ix young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell
->Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the
->elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only
->halfway (Class D) and throwing the hips to the front (Class E)."
+* exactly according to the specification (Class A)
+* throwing the elbows to the front (Class B)
+* lifting the dumbbell only halfway (Class C)
+* lowering the dumbbell only halfway (Class D) 
+* throwing the hips to the front (Class E)."
 
 The dataset contains readings from a number of sensors attached to the participants while performing the exercises. This report explains how a statistical prediction model was built using these variables in order to predict the type of error performed by the participants. 
-
-### Data cleaning and preparation
+## Data cleaning and preparation
 
 As a first step in the analysis, we load and clean the data. About two thirds of the variables in the dataset contain mostly missing values, which were removed. A number of variables relating to the timing of the exercises were also removed, since the documentation on how to interpret these varibles was incomplete.
 
 Although the dataset was already divided into a training and a testing set, the training set was deemed large enough to be split into training and a validation sets (using an 80/20 split). Creating a validation set allowed me to get a more accurate estimate of the test set error rate than I would using only cross-validation on the original training set.
 
 As a final step in the preparation, all variables were scaled and centered, primarily to allow for easier plotting, but also since some ML algorithms need/prefer the data to be thus transformed.
-
-
-
 
 ```r
 # Load packages
@@ -33,266 +32,145 @@ As a final step in the preparation, all variables were scaled and centered, prim
 library(caret)
 library(doParallel)
 
-# Register cores for parallel processing
-cl <- makeCluster(detectCores())
-registerDoParallel(cl)
+
 
 # Load data
-training <- read.csv("C:/r/Machear learning/Proyecto a enviar/pml-training.csv", stringsAsFactors = FALSE)%>% tbl_df
-testing <- read.csv("C:/r/Machear learning/Proyecto a enviar/pml-testing.csv", stringsAsFactors = FALSE) %>% tbl_df
+training <- read.csv("C:/r/Machear learning/Proyecto a enviar/data/pml-training.csv" , na.strings = c("NA", "", "#DIV/0!"))
 
-training$set <- "train"
-testing$set <- "test"
-classe <- training$classe
-problem_id <- testing$problem_id
-testing$problem_id <- NULL
-
-full <- rbind(select(training, -classe), testing)
-
-# Remove variables with mostly NAs
-naCols <- apply(full, 2, function(x) sum(is.na(x)))
-full <- full[-which(naCols > 0)]
-
-# Remove variables not related to instrument readings
-full <- full[-c(1, 3:7)]
-
-# Re-split into training and testing sets
-train <- full[full$set == "train",]
-test <- full[full$set == "test",]
-
-train$classe <- classe
-test$problem_id <- problem_id
-rm(full)
-
-# Create training and validation set
-set.seed(1)
-index <- createDataPartition(train$classe, p = 0.8, list = FALSE)
-
-train2 <- train[index,]
-valid <- train[-index,]
-
-# Remove variables with near-zero variance
-nzv <- nearZeroVar(train2)
-train2 <- train2[,-nzv]
-valid <- valid[,-nzv]
-test <- test[,-nzv]
-
-# Scale and center the data
-scale_center <- preProcess(select(train2, -classe, -user_name), 
-                           method = c("scale", "center"))
-
-train_scaled <- predict(scale_center, select(train2, -classe, -user_name))
-train_scaled$classe <- train2$classe
-
-valid_scaled <- predict(scale_center, select(valid, -classe, -user_name))
-valid_scaled$classe <- valid$classe
-
-train_scaled$classe <- factor(train_scaled$classe)
-valid_scaled$classe <- factor(valid_scaled$classe)
-train_scaled$user_name <- factor(train2$user_name)
-valid_scaled$user_name <- factor(valid$user_name)
-```
-
-### Exploratory data analysis 
-
-To get a feel for what the data looked like, a large number of graphs were produced. The first figure below, for example, gives a first indication that the different classes are quite well-separated (we should thus expect a relatively high accuracy rate). 
+testing <- read.csv("C:/r/Machear learning/Proyecto a enviar/data/pml-testing.csv", , na.strings = c("NA", "", "#DIV/0!"))
 
 
-```r
-qplot(data=train, roll_belt, pitch_belt, facets=user_name~classe)
-```
+# Cleaning both datasets:
+The preliminary analysis shows there are a lot of features having NA or blanked entries in both the training and testing sets. Due to this, I will now proceed to remove the features having NA and/or missing values. 
 
-![plot of chunk qplot](./readme_files/figure-html/qplot.png) 
+```{r}
 
-The next figure illustrates the high correlation between the readings of different sensors (e.g. high correlation between the sensors for different directions in the movement of the forearm). This suggests that there is probably a high level of redundancy in the predictors, and that a dimension reduction method (e.g. principal components analysis) might work well in trimming down the number of predictors and thus make the model more easily interpretable. However, since we are strictly interested in the prediction accuracy of the model here, no such dimension reduction was performed.
-
-
-```r
-library(corrplot)
-train2[-c(1,54)] %>% 
-  cor %>% 
-  corrplot(method = "color", tl.cex = 0.5)
-```
-
-![plot of chunk corrplot](./readme_files/figure-html/corrplot.png) 
-
-### Training a model
-
-A large number of standard ML models were fit to the data. However, due to computational considerations, only the most promising type of model -- the stochastic gradient boosting model (gbm) -- is documented here. The other models tested included linear discriminant analysis, a support vector machine with radial kernel, recursive partitioning tree, and random forests. Using the standard tuning length in the ```caret``` package, they all had CV-estimated accuracies in the .7-.8 range. 
-
-The initial plan was to tune the gbm model using all three tuning parameters (number of trees, the interaction depth, and the shrinkage factor), and evaluate each model using 10-fold cross-validation. However, doing this in only one function call proved to be too computationally intense, for which reason I trained the model using  multiple smaller tuning grids. The code below shows the final function calls. 
-
-
-```r
-# Train models
-trc <- trainControl("cv", number = 2)
-
-gbmGrid <- expand.grid(n.trees = seq(300, 500, 50), 
-                        interaction.depth = 3:4,
-                        shrinkage = c(0.1))
-
-# gbm_valid <- train(y = train_scaled[,53], x = train_scaled[-53], 
-#                  method = "gbm", 
-#                  trControl = trc, 
-#                  tuneGrid = gbmGrid, 
-#                  verbose = TRUE)
-
-# save(gbm_valid, file = "gbm_valid.RData")
-load(file = "gbm_valid.RData")
-gbm_valid
-```
-
-```
-## Stochastic Gradient Boosting 
-## 
-## 15699 samples
-##    53 predictor
-##     5 classes: 'A', 'B', 'C', 'D', 'E' 
-## 
-## No pre-processing
-## Resampling: Cross-Validated (2 fold) 
-## 
-## Summary of sample sizes: 7849, 7850 
-## 
-## Resampling results across tuning parameters:
-## 
-##   interaction.depth  n.trees  Accuracy  Kappa  Accuracy SD  Kappa SD
-##   3                  300      1         1      2e-03        3e-03   
-##   3                  350      1         1      2e-03        3e-03   
-##   3                  400      1         1      1e-03        1e-03   
-##   3                  450      1         1      3e-04        3e-04   
-##   3                  500      1         1      9e-05        1e-04   
-##   4                  300      1         1      9e-05        1e-04   
-##   4                  350      1         1      5e-04        7e-04   
-##   4                  400      1         1      9e-04        1e-03   
-##   4                  450      1         1      1e-03        2e-03   
-##   4                  500      1         1      4e-04        5e-04   
-## 
-## Tuning parameter 'shrinkage' was held constant at a value of 0.1
-## Accuracy was used to select the optimal model using  the largest value.
-## The final values used for the model were n.trees = 500,
-##  interaction.depth = 4 and shrinkage = 0.1.
-```
-
-The best model had a CV-estimated accuracy of 0.987 and the optimal tuning parameters were chosen as 500 trees, an interaction depth of 4, and a shrinkage parameter of 0.1.
-
-### Evaluating the model
-
-To estimate the out-of-sample error rate of the model, predictions for the validation set for calculated and compared against the ground truth in a confusion matrix.
-
-
-```r
-(confMat <- confusionMatrix(predict(gbm_valid, valid_scaled[-53]), valid_scaled$classe))
-```
-
-```
-## Confusion Matrix and Statistics
-## 
-##           Reference
-## Prediction    A    B    C    D    E
-##          A 1114   10    0    2    0
-##          B    1  742    9    0    0
-##          C    0    1  647   25    0
-##          D    1    6   20  616    3
-##          E    0    0    8    0  718
-## 
-## Overall Statistics
-##                                         
-##                Accuracy : 0.978         
-##                  95% CI : (0.973, 0.982)
-##     No Information Rate : 0.284         
-##     P-Value [Acc > NIR] : <2e-16        
-##                                         
-##                   Kappa : 0.972         
-##  Mcnemar's Test P-Value : NA            
-## 
-## Statistics by Class:
-## 
-##                      Class: A Class: B Class: C Class: D Class: E
-## Sensitivity             0.998    0.978    0.946    0.958    0.996
-## Specificity             0.996    0.997    0.992    0.991    0.998
-## Pos Pred Value          0.989    0.987    0.961    0.954    0.989
-## Neg Pred Value          0.999    0.995    0.989    0.992    0.999
-## Prevalence              0.284    0.193    0.174    0.164    0.184
-## Detection Rate          0.284    0.189    0.165    0.157    0.183
-## Detection Prevalence    0.287    0.192    0.172    0.165    0.185
-## Balanced Accuracy       0.997    0.987    0.969    0.974    0.997
-```
-
-The confusion matrix suggests that classes C and D were the most problematic to predict. Still, the accuracy rate of 
-0.978 was promising. 
-
-### Making predictions
-
-Finally, a model identical to the one found above was fit to the entire training set (i.e. including the 3000 or so observations in the validation set not used to fit the previous model). The model was then used to predict the 20 classes in the original training set. 
-
-
-```r
-scale_center_final <- preProcess(select(train, -classe, -user_name, -set), 
-                           method = c("scale", "center"))
-train_scaled_final <- predict(scale_center_final, select(train, -classe, -user_name, -set))
-train_scaled_final$classe <- train$classe
-train_scaled_final$user_name <- factor(train$user_name)
-
-test_scaled <- predict(scale_center_final, select(test, -problem_id, -user_name))
-test_scaled$problem_id <- test$problem_id
-test_scaled$user_name <- factor(test$user_name)
-```
-
-
-```r
-# Train model using optimal tuning params from cross-validated earlier model
-trc_final <- trainControl("none")
-
-gbmGrid_final <- data.frame(n.trees = gbm_valid$finalModel$n.trees, 
-                        interaction.depth = gbm_valid$finalModel$interaction.depth,
-                        shrinkage = gbm_valid$finalModel$shrinkage)
-
-# gbm_final <- train(y = train_scaled_final$classe, x = train_scaled_final[-53], 
-#              method = "gbm", 
-#              trControl = trc_final, 
-#              tuneGrid = gbmGrid_final, 
-#              verbose = TRUE)
-
-# save(gbm_final, file = "gbm_final.RData")
-load("gbm_final.RData")
-gbm_final
-```
-
-```
-## Stochastic Gradient Boosting 
-## 
-## 19622 samples
-##    53 predictor
-## 
-## No pre-processing
-## Resampling: None
-```
-
-
-```r
-# Function for creating files to submit answers
-pml_write_files = function(x){
-    n = length(x)
-    for(i in 1:n){
-      filename = paste0("./answers/problem_id_",i,".txt")
-      write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
-    }
+data_clean <- function(dat){
+    
+    dat <- subset(dat, select = -c(X, 
+                                   user_name,
+                                   raw_timestamp_part_1,
+                                   raw_timestamp_part_2,
+                                   cvtd_timestamp,
+                                   new_window,
+                                   num_window))  
+    dat <- dat[,sapply(X=dat, FUN = function(d){sum(is.na(d))}) == 0]
+    return(dat)
 }
 
-# Predicted answers
-(answers <- predict(gbm_final, select(test_scaled, -problem_id)))
+
+training <- data_clean(training)
+testing <- data_clean(testing)
 ```
 
-```
-##  [1] B A B A A E D B A A B C B A E E A B B B
-## Levels: A B C D E
+
+##Division of data
+
+Therefore, it is important to divide the data into training and testing subsets and use the training subset to learn and testing to be able to estimate.
+
+The following divides into two subsets so that 75% of the cases are part of the subset train and 25% becomes part of the subset test
+```{r slicing}
+indexTrain <- createDataPartition(y = training$classe, p=0.75, list = FALSE)
+train <- training[indexTrain,]
+test <- training[-indexTrain,]
 ```
 
-```r
-# pml_write_files(answers)
+## Predicting
+The following is the distribution of the outcome variable, which is at a 5-level nominal scale and does not appear to have any extreme abnormalities to additionally address: 
+```{r, fig.align='center'}
+training %>% ggplot(aes(x=classe)) + geom_bar() + labs(title = "Distribution of the Outcome: the Unilateral Dumbbell Biceps Curl in five different fashions")
 ```
 
-### Conclusion
+The rest of the variables are either numeric or integer:
+```{r}
+sapply(train, class) %>% sort() 
+```
 
-This report has explained how a machine learning algorithm called "Gradient boosting machine" was fitted to a dataset on sensor-readings in order to predict the type of physical exercise being performed. The model achieved a validation set accuracy rate close to 0.98 and correctly predicted 20/20 observations in a test set.Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+For the nominal-level outcome, it is appropriate to classification rather than regression learners. Therefore, for the purposes of this project the following classification models will be considered:
+
+* Classification Trees (CART model)
+* Random Forest (rf) with 10-fold cross-validation  
+* Boosting (gbm)
+
+The method based on classification trees is relatively simple and must be fast in classifying the training dataset with 14718 observations. At the same time, it might demonstrate low accuracy. On the other hand, the latter two methods are among the most accurate existing learners and expected to demonstrate high accuracy but also require significant computational power and may take a long time to run. 
+
+## Prediction with Classification Trees
+Here I build a tree model with 5-folds cross validation and then estimate it's in-sample and out-sample errors and accuracy.
+```{r cart, cache=TRUE}
+tr_control <- trainControl(method="cv", number = 5)
+model_tree <- train(classe ~ ., data = train, method = "rpart", trControl = tr_control)
+fancyRpartPlot(model_tree$finalModel)
+
+pred_train <- predict(model_tree, newdata = train1)
+confMatrix_train <- confusionMatrix(train1$classe, pred_train)
+confMatrix_train$table
+confMatrix_train$overall[1]
+
+pred_test <- predict(model_tree, newdata = test1)
+confMatrix_test <- confusionMatrix(test1$classe, pred_test)
+confMatrix_test$table
+confMatrix_test$overall[1]
+```
+We can see from these results that the quality of the model is very poor:
+
+- the both in-sample and out-sample errors are significant;
+- the model accuracy is about 0.5 for both training and test data.
+
+The model characteristics obtained definitively say that this model would be not useful for further predictions.
+
+## Prediction with Random Forests
+Now I'll build a Random Forests model with 5-folds cross validation and look at its in-sample and out-sample errors and accuracy.
+``` {r forests, cache=TRUE}
+tr_control <- trainControl(method="cv", number = 5)
+model_forest <- train(classe ~ ., data = train, method="rf", trControl = tr_control)
+model_forest$finalModel
+
+pred_train <- predict(model_forest, newdata = train)
+confMatrix_train <- confusionMatrix(train$classe, pred_train)
+confMatrix_train$table
+confMatrix_train$overall[1]
+
+pred_test <- predict(model_forest, newdata = test)
+confMatrix_test <- confusionMatrix(test$classe, pred_test)
+confMatrix_test$table
+confMatrix_test$overall[1]
+```
+This model seems to be very good  with accuracy 1 on the training data and 0.99 on the test data. It's inspiring!
+
+## Prediction with Gradient Boosting Method
+Here I'll try one more model and look at its characteristics.
+```{r boosted, cache=TRUE}
+tr_control <- trainControl(method="cv", number = 5)
+model_boost <- train(classe ~ ., data = train, method = "gbm",
+               trControl = tr_control, verbose = FALSE)
+model_boost$finalModel
+
+pred_train <- predict(model_boost, newdata = train)
+confMatrix_train <- confusionMatrix(train$classe, pred_train)
+confMatrix_train$table
+confMatrix_train$overall[1]
+
+pred_test <- predict(model_boost, newdata = test)
+confMatrix_test <- confusionMatrix(test$classe, pred_test)
+confMatrix_test$table
+confMatrix_test$overall[1]
+
+```
+This model is also very good with the accuracy of 0.97 on training data and 0.96 on test data. 
+
+## Prediction on Test Data.
+Here I try to do a prediction on test data by two models obtained by **random forests** and **gradient boosting** methods and compare the results.
+```{r testdata, cache = TRUE }
+predict(model_forest, newdata = test_data)
+predict(model_boost, newdata = test_data)
+```
+The results obtained are equal that gives me a hope that my prediction of Classes for the test data will be precise!
+
+## Conclusion
+Se uso  modelado de árboles y comparé su calidad de predicción en este caso.
+
+El árbol de clasificación el resulatodo era bobre debido al usos  de mucahs variables
+
+El  Gradient Boosting Regression  obtuvo un muy buen resultado, 
+El Random Forests  es el mas optimo
+
