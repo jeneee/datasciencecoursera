@@ -74,9 +74,10 @@ training %>%
   ggplot(aes(x=classe)) +  geom_bar()+labs(title = "Distribución del resultados")
 ```
 
-## Prediction with Classification Trees
+## Prediccion con clasificacion tres
 
-Here I build a tree model with 5-folds cross validation and then estimate it's in-sample and out-sample errors and accuracy.
+
+Aquí construyo un modelo de árbol con una validación cruzada de 5 pliegues 
 ```
 tr_control <- trainControl(method="cv", number = 5)
 model_tree <- train(classe ~ ., data = train, method = "rpart", trControl = tr_control)
