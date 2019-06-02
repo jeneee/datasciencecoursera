@@ -1,61 +1,53 @@
 ---
-title: "PML Course Project"
+title: "Untitled"
 author: "jene"
-date: "May 31, 2019"
-output: 
-  html_document: 
-    keep_md: yes
+date: "31 de mayo de 2019"
+output: html_document
 ---
-## Introduction
+##introducción
 
-This proyecto uses a [Weight Lifting Exercises Dataset](http://groupware.les.inf.puc-rio.br/har#dataset) to build a prediction model for whether or not a person is correctly performing an exercise, and what type of error he or she may be making. Specifically, 
+Este proyecto utiliza el DataSet de ejercicios de levantamiento de pesas para desarrollar y probar un modelo de reconocimiento/predicción de actividad humana. En particular, el objetivo de este proyecto es reconocer/predecir la manera en que los usuarios de un conjunto de sensores corporales hicieron el ejercicio de levantamiento de pesas. Procesará los datos de acelerómetros en la banda, antebrazo, brazo y Dumbell de 6 participantes que realizaron barbell ascensores correctamente y de forma incorrecta de 5 maneras diferentes.
 
-* exactly according to the specification (Class A)
-* throwing the elbows to the front (Class B)
-* lifting the dumbbell only halfway (Class C)
-* lowering the dumbbell only halfway (Class D) 
-* throwing the hips to the front (Class E)."
 
-The dataset contains readings from a number of sensors attached to the participants while performing the exercises. This report explains how a statistical prediction model was built using these variables in order to predict the type of error performed by the participants. 
-## Data cleaning and preparation
-
-As a first step in the analysis, we load and clean the data. About two thirds of the variables in the dataset contain mostly missing values, which were removed. A number of variables relating to the timing of the exercises were also removed, since the documentation on how to interpret these varibles was incomplete.
-
-Although the dataset was already divided into a training and a testing set, the training set was deemed large enough to be split into training and a validation sets (using an 80/20 split). Creating a validation set allowed me to get a more accurate estimate of the test set error rate than I would using only cross-validation on the original training set.
-
-As a final step in the preparation, all variables were scaled and centered, primarily to allow for easier plotting, but also since some ML algorithms need/prefer the data to be thus transformed.
-
-```r
-# Load packages
-# library(dplyr)
-# library(ggplot2)
+```
+library(knitr)
 library(caret)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
 library(doParallel)
+library(dplyr)
+##install.packages("dplyr")
+
+```
+#Lendod los datos
+
+```
+training <- read.csv("C:/r/Machear learning/Proyecto a enviar/pml-training.csv",  na.strings=c("NA","#DIV/0!",""), header = TRUE)
+testing <- read.csv("C:/r/Machear learning/Proyecto a enviar/pml-testing.csv",  na.strings=c("NA","#DIV/0!",""), header = TRUE)
+dim(training)
+
+```
+#  Limpieza de los datos
+elimanado los espacios en blanco y los nA
 
 
-
-# Load data
-training <- read.csv("C:/r/Machear learning/Proyecto a enviar/data/pml-training.csv" , na.strings = c("NA", "", "#DIV/0!"))
-
-testing <- read.csv("C:/r/Machear learning/Proyecto a enviar/data/pml-testing.csv", , na.strings = c("NA", "", "#DIV/0!"))
-
-
-# Cleaning both datasets:
-The preliminary analysis shows there are a lot of features having NA or blanked entries in both the training and testing sets. Due to this, I will now proceed to remove the features having NA and/or missing values. 
-
-```{r}
-
+```
+sapply(X=training, FUN = function(d){sum(is.na(d))}) 
 data_clean <- function(dat){
-    
-    dat <- subset(dat, select = -c(X, 
-                                   user_name,
-                                   raw_timestamp_part_1,
-                                   raw_timestamp_part_2,
-                                   cvtd_timestamp,
-                                   new_window,
-                                   num_window))  
-    dat <- dat[,sapply(X=dat, FUN = function(d){sum(is.na(d))}) == 0]
-    return(dat)
+  
+  dat <- subset(dat, select = -c(X, 
+                                 user_name,
+                                 raw_timestamp_part_1,
+                                 raw_timestamp_part_2,
+                                 cvtd_timestamp,
+                                 new_window,
+                                 num_window))  
+  dat <- dat[,sapply(X=dat, FUN = function(d){sum(is.na(d))}) == 0]
+  return(dat)
 }
 
 
@@ -63,114 +55,58 @@ training <- data_clean(training)
 testing <- data_clean(testing)
 ```
 
+## division de los datos 
 
-##Division of data
+Aquí divido los datos del tren en dos subgrupos: un sub-entrenamiento (70%) y un sub-test (30%) conjuntos de sata.
 
-Therefore, it is important to divide the data into training and testing subsets and use the training subset to learn and testing to be able to estimate.
+```{r partition, cache=TRUE}
 
-The following divides into two subsets so that 75% of the cases are part of the subset train and 25% becomes part of the subset test
-```{r slicing}
 indexTrain <- createDataPartition(y = training$classe, p=0.75, list = FALSE)
 train <- training[indexTrain,]
 test <- training[-indexTrain,]
+dim(train)
+```{r partition, cache=TRUE}
+
+#PrediccioN
+Ladistribución de la variable de resultado, que está en una escala nominal de 5 niveles y no parece tener ninguna anormalidad
 ```
-
-## Predicting
-The following is the distribution of the outcome variable, which is at a 5-level nominal scale and does not appear to have any extreme abnormalities to additionally address: 
-```{r, fig.align='center'}
-training %>% ggplot(aes(x=classe)) + geom_bar() + labs(title = "Distribution of the Outcome: the Unilateral Dumbbell Biceps Curl in five different fashions")
+training %>%
+  ggplot(aes(x=classe)) +  geom_bar()+labs(title = "Distribución del resultados")
 ```
-
-The rest of the variables are either numeric or integer:
-```{r}
-sapply(train, class) %>% sort() 
-```
-
-For the nominal-level outcome, it is appropriate to classification rather than regression learners. Therefore, for the purposes of this project the following classification models will be considered:
-
-* Classification Trees (CART model)
-* Random Forest (rf) with 10-fold cross-validation  
-* Boosting (gbm)
-
-The method based on classification trees is relatively simple and must be fast in classifying the training dataset with 14718 observations. At the same time, it might demonstrate low accuracy. On the other hand, the latter two methods are among the most accurate existing learners and expected to demonstrate high accuracy but also require significant computational power and may take a long time to run. 
 
 ## Prediction with Classification Trees
+
 Here I build a tree model with 5-folds cross validation and then estimate it's in-sample and out-sample errors and accuracy.
-```{r cart, cache=TRUE}
+```
 tr_control <- trainControl(method="cv", number = 5)
 model_tree <- train(classe ~ ., data = train, method = "rpart", trControl = tr_control)
 fancyRpartPlot(model_tree$finalModel)
 
-pred_train <- predict(model_tree, newdata = train1)
-confMatrix_train <- confusionMatrix(train1$classe, pred_train)
-confMatrix_train$table
-confMatrix_train$overall[1]
-
-pred_test <- predict(model_tree, newdata = test1)
-confMatrix_test <- confusionMatrix(test1$classe, pred_test)
-confMatrix_test$table
-confMatrix_test$overall[1]
-```
-We can see from these results that the quality of the model is very poor:
-
-- the both in-sample and out-sample errors are significant;
-- the model accuracy is about 0.5 for both training and test data.
-
-The model characteristics obtained definitively say that this model would be not useful for further predictions.
-
-## Prediction with Random Forests
-Now I'll build a Random Forests model with 5-folds cross validation and look at its in-sample and out-sample errors and accuracy.
-``` {r forests, cache=TRUE}
-tr_control <- trainControl(method="cv", number = 5)
-model_forest <- train(classe ~ ., data = train, method="rf", trControl = tr_control)
-model_forest$finalModel
-
-pred_train <- predict(model_forest, newdata = train)
+pred_train <- predict(model_tree, newdata = train)
 confMatrix_train <- confusionMatrix(train$classe, pred_train)
 confMatrix_train$table
 confMatrix_train$overall[1]
 
-pred_test <- predict(model_forest, newdata = test)
-confMatrix_test <- confusionMatrix(test$classe, pred_test)
-confMatrix_test$table
-confMatrix_test$overall[1]
-```
-This model seems to be very good  with accuracy 1 on the training data and 0.99 on the test data. It's inspiring!
-
-## Prediction with Gradient Boosting Method
-Here I'll try one more model and look at its characteristics.
-```{r boosted, cache=TRUE}
-tr_control <- trainControl(method="cv", number = 5)
-model_boost <- train(classe ~ ., data = train, method = "gbm",
-               trControl = tr_control, verbose = FALSE)
-model_boost$finalModel
-
-pred_train <- predict(model_boost, newdata = train)
-confMatrix_train <- confusionMatrix(train$classe, pred_train)
-confMatrix_train$table
-confMatrix_train$overall[1]
-
-pred_test <- predict(model_boost, newdata = test)
+pred_test <- predict(model_tree, newdata = test)
 confMatrix_test <- confusionMatrix(test$classe, pred_test)
 confMatrix_test$table
 confMatrix_test$overall[1]
 
 ```
-This model is also very good with the accuracy of 0.97 on training data and 0.96 on test data. 
+## Predicción de los datos 
+Aquí trato de hacer una predicción sobre los datos de las pruebas con dos modelos obtenidos donde se compara 
+`` `{r testdata, cache = TRUE}
+predecir (model_forest, newdata = test_data)
+predecir (model_boost, newdata = test_data)
+`` `
+Los resultados obtenidos son iguales, lo que me da una esperanza de que mi predicción de Clases para los datos de prueba será precisa.
 
-## Prediction on Test Data.
-Here I try to do a prediction on test data by two models obtained by **random forests** and **gradient boosting** methods and compare the results.
-```{r testdata, cache = TRUE }
-predict(model_forest, newdata = test_data)
-predict(model_boost, newdata = test_data)
-```
-The results obtained are equal that gives me a hope that my prediction of Classes for the test data will be precise!
+## Conclusión
 
-## Conclusion
-Se uso  modelado de árboles y comparé su calidad de predicción en este caso.
 
-El árbol de clasificación el resulatodo era bobre debido al usos  de mucahs variables
+El árbol de clasificación El resulatodo era muy pobare  debido a los usos de muchas variables
 
-El  Gradient Boosting Regression  obtuvo un muy buen resultado, 
-El Random Forests  es el mas optimo
+El Gradient Boosting Regression obtuvo un muy buen resultado,
+El Random Forests es el mas optimo
+
 
